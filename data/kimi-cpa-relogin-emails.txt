@@ -1,0 +1,6 @@
+# Optional fallback email list.
+# CPA relogin normally reads 401 accounts from the CPA management API.
+# Put one login email per line only if you use the local fallback flow.
+#
+# example-user-1@example.edu
+# example-user-2@example.edu
