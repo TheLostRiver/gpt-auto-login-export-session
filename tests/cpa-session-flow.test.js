@@ -126,7 +126,7 @@ test('Outlook pool login flow is available in sidepanel and preserved by capabil
 
 test('Outlook pool prepare node allocates Hotmail pool account and never prepares CPA relogin queue', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
-  const fnMatch = source.match(/async function executeOutlookPoolPrepareNode[\s\S]*?\n}\n\nasync function executeCpaReloginPrepareNode/);
+  const fnMatch = source.match(/async function executeOutlookPoolPrepareNode[\s\S]*?\n}\n\nasync function runAutoSequenceFromNode/);
   assert.ok(fnMatch, 'executeOutlookPoolPrepareNode function should be present');
   const fn = fnMatch[0];
 
@@ -135,6 +135,64 @@ test('Outlook pool prepare node allocates Hotmail pool account and never prepare
   assert.match(fn, /account\.email/);
   assert.doesNotMatch(fn, /prepareCpaReloginQueueForAutoRun/);
   assert.match(source, /'outlook-pool-prepare': \(state\) => executeOutlookPoolPrepareNode\(state\)/);
+});
+
+test('auto-run only requires CPA queue email when chatgpt-web-login is actually backed by CPA relogin queue', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/async function runAutoSequenceFromNodeGraph[\s\S]*?\n}\n\nasync function waitForResume/);
+  assert.ok(fnMatch, 'runAutoSequenceFromNodeGraph function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(fn, /await shouldRunNamedNode\('outlook-pool-prepare'\)/);
+  assert.match(fn, /await executeNodeAndWaitWithAutoRunIdleLogWatchdog\('outlook-pool-prepare'/);
+  assert.match(fn, /shouldUseCpaReloginQueueForAutoRun\(await getState\(\)\)/);
+  assert.match(fn, /ensureCpaReloginQueueEmailReady\(targetRun, totalRuns, attemptRuns\)/);
+});
+
+test('auto-run applies selected Outlook pool flow before preparing the CPA relogin queue', async () => {
+  let state = {
+    panelMode: 'cpa',
+    loginFlowMode: 'cpa-relogin',
+    plusModeEnabled: false,
+    signupMethod: 'email',
+  };
+  const queuePrepModes = [];
+  const setStateCalls = [];
+  let startedTotalRuns = 0;
+
+  const router = globalThis.MultiPageBackgroundMessageRouter.createMessageRouter({
+    addLog: async () => {},
+    clearStopRequest: () => {},
+    getPendingAutoRunTimerPlan: () => null,
+    getState: async () => state,
+    normalizeRunCount: (value) => Math.max(1, Number(value) || 1),
+    prepareCpaReloginQueueForAutoRun: async () => {
+      queuePrepModes.push(state.loginFlowMode);
+      return { enabled: false, totalRuns: 0 };
+    },
+    setState: async (updates) => {
+      setStateCalls.push(updates);
+      state = { ...state, ...updates };
+    },
+    startAutoRunLoop: (totalRuns) => {
+      startedTotalRuns = totalRuns;
+    },
+    validateAutoRunStart: () => ({ ok: true, errors: [] }),
+  });
+
+  const response = await router.handleMessage({
+    type: 'AUTO_RUN',
+    source: 'test',
+    payload: {
+      totalRuns: 1,
+      loginFlowMode: 'outlook-pool',
+    },
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(queuePrepModes[0], 'outlook-pool');
+  assert.equal(startedTotalRuns, 1);
+  assert.equal(setStateCalls.some((updates) => updates.loginFlowMode === 'outlook-pool'), true);
 });
 
 test('session token export modes force SESSION JSON access strategy', () => {

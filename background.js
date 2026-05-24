@@ -91,6 +91,8 @@ const SESSION_TOKEN_EXPORT_PANEL_MODES = Object.freeze([
   ACCESS_TOKEN_PANEL_MODE,
   SESSION_TOKEN_BUNDLE_PANEL_MODE,
 ]);
+const DEFAULT_LOGIN_FLOW_MODE = 'cpa-relogin';
+const LOGIN_FLOW_MODE_OUTLOOK_POOL = 'outlook-pool';
 const NORMAL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   plusModeEnabled: false,
@@ -204,12 +206,14 @@ const LOCAL_CPA_JSON_NO_RT_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.get
 const CPA_SESSION_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   panelMode: 'cpa',
+  loginFlowMode: DEFAULT_LOGIN_FLOW_MODE,
   plusModeEnabled: false,
   plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
 }) || [];
 const SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   panelMode: ACCOUNT_TOKEN_PANEL_MODE,
+  loginFlowMode: DEFAULT_LOGIN_FLOW_MODE,
   plusModeEnabled: false,
   plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
 }) || [];
@@ -784,9 +788,13 @@ function getStepDefinitionsForState(state = {}) {
     const panelMode = typeof getPanelMode === 'function'
       ? getPanelMode(state)
       : String(state?.panelMode || '').trim().toLowerCase() || 'cpa';
+    const loginFlowMode = typeof normalizeLoginFlowMode === 'function'
+      ? normalizeLoginFlowMode(state?.loginFlowMode)
+      : String(state?.loginFlowMode || '').trim().toLowerCase();
     const definitions = rootScope.MultiPageStepDefinitions.getSteps({
       activeFlowId,
       panelMode,
+      loginFlowMode,
       plusModeEnabled: isPlusModeState(state),
       plusPaymentMethod: normalizePlusPaymentMethod(state?.plusPaymentMethod),
       plusAccountAccessStrategy: normalizePlusAccountAccessStrategyForState(state),
@@ -906,6 +914,7 @@ function getNodeDefinitionsForState(state = {}) {
       ...state,
       activeFlowId: state?.activeFlowId || state?.flowId || DEFAULT_ACTIVE_FLOW_ID,
       flowId: state?.flowId || state?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID,
+      loginFlowMode: state?.loginFlowMode,
     });
   }
   return getStepDefinitionsForState(state)
@@ -1000,6 +1009,7 @@ function setupDeclarativeNetRequestRules() {
 
 const PERSISTED_SETTING_DEFAULTS = {
   panelMode: DEFAULT_PANEL_MODE,
+  loginFlowMode: DEFAULT_LOGIN_FLOW_MODE,
   localCpaJsonPluginDir: '',
   localCpaJsonRelativeAuthDir: DEFAULT_LOCAL_CPA_JSON_RELATIVE_AUTH_DIR,
   vpsUrl: KIMITOOL_DEFAULT_CPA_URL,
@@ -2709,6 +2719,12 @@ function normalizePlusAccountAccessStrategy(value = '') {
   return PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH;
 }
 
+function normalizeLoginFlowMode(value = '') {
+  return String(value || '').trim().toLowerCase() === LOGIN_FLOW_MODE_OUTLOOK_POOL
+    ? LOGIN_FLOW_MODE_OUTLOOK_POOL
+    : DEFAULT_LOGIN_FLOW_MODE;
+}
+
 function normalizePlusAccountAccessStrategyForState(state = {}) {
   const panelMode = typeof getPanelMode === 'function'
     ? getPanelMode(state)
@@ -3005,6 +3021,8 @@ function normalizePersistentSettingValue(key, value) {
   switch (key) {
     case 'panelMode':
       return normalizePanelMode(value);
+    case 'loginFlowMode':
+      return normalizeLoginFlowMode(value);
     case 'vpsUrl':
       return String(value || '').trim();
     case 'vpsPassword':
@@ -3610,6 +3628,7 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
     || Object.prototype.hasOwnProperty.call(payload, 'plusModeEnabled')
     || Object.prototype.hasOwnProperty.call(payload, 'signupMethod')
     || Object.prototype.hasOwnProperty.call(payload, 'panelMode')
+    || Object.prototype.hasOwnProperty.call(payload, 'loginFlowMode')
     || Object.prototype.hasOwnProperty.call(payload, 'activeFlowId')) {
     payload.signupMethod = resolveSignupMethod(nextSignupConstraintState);
   }
@@ -13151,6 +13170,9 @@ function shouldUseCpaReloginQueueForAutoRun(state = {}) {
   if (!isCpaReloginPanelMode(getPanelMode(state))) {
     return false;
   }
+  if (normalizeLoginFlowMode(state?.loginFlowMode) === LOGIN_FLOW_MODE_OUTLOOK_POOL) {
+    return false;
+  }
   const nodeIds = getAutoRunWorkflowNodeIds(state);
   return nodeIds.includes('cpa-relogin-prepare') && nodeIds.includes('chatgpt-web-login');
 }
@@ -13421,6 +13443,52 @@ async function executeCpaReloginPrepareNode(state = {}) {
   return result;
 }
 
+async function executeOutlookPoolPrepareNode(state = {}) {
+  const currentState = await getState();
+  if (!isHotmailProvider(currentState)) {
+    throw new Error('从选定的邮箱池里执行登录/注册：当前只支持 Outlook/Hotmail 邮箱池，请先把邮箱提供方切换为 Outlook Email。');
+  }
+
+  const account = await ensureHotmailAccountForFlow({
+    allowAllocate: true,
+    markUsed: true,
+    preferredAccountId: currentState.currentHotmailAccountId || null,
+    allowUsedCurrent: false,
+  });
+  const email = String(account.email || '').trim();
+  if (!email) {
+    throw new Error('从选定的邮箱池里执行登录/注册：选中的 Outlook/Hotmail 账号缺少邮箱地址。');
+  }
+
+  await setEmailState(email, { source: 'outlook-pool-login-flow' });
+  const updates = {
+    signupMethod: SIGNUP_METHOD_EMAIL,
+    resolvedSignupMethod: SIGNUP_METHOD_EMAIL,
+    forceLoginIdentifierType: 'email',
+    forceEmailLogin: true,
+    accountIdentifierType: 'email',
+    accountIdentifier: email,
+    currentCpaReloginEmail: '',
+    currentCpaReloginRun: 0,
+    currentLoginConfigEmail: '',
+    currentLoginConfigRun: 0,
+    step8VerificationTargetEmail: email,
+  };
+  await setState(updates);
+  broadcastDataUpdate({
+    email,
+    accountIdentifier: email,
+    accountIdentifierType: 'email',
+    currentHotmailAccountId: account.id || currentState.currentHotmailAccountId || null,
+  });
+  await addLog(`Outlook 邮箱池：已选取账号 ${email}，本轮将使用该邮箱执行登录/注册。`, 'ok');
+  await completeNodeFromBackground(state?.nodeId || 'outlook-pool-prepare', {
+    email,
+    currentHotmailAccountId: account.id || null,
+  });
+  return account;
+}
+
 async function runAutoSequenceFromNode(startNodeId, context = {}) {
   const state = await getState();
   const normalizedStartNodeId = String(startNodeId || '').trim();
@@ -13585,6 +13653,21 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
     await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：第 ${attemptRuns} 次尝试，阶段 1，打开官网并进入密码页 ===`, 'info');
   }
 
+  if (await shouldRunNamedNode('outlook-pool-prepare')) {
+    try {
+      await executeNodeAndWaitWithAutoRunIdleLogWatchdog('outlook-pool-prepare', getAutoRunNodeDelayMs('outlook-pool-prepare'));
+    } catch (err) {
+      attachFailedNode(err, 'outlook-pool-prepare', await getState());
+      if (isStopError(err)) {
+        throw err;
+      }
+      if (await restartCurrentNodeAfterIdle('outlook-pool-prepare', err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
   if (await shouldRunNamedNode('open-chatgpt')) {
     try {
       await executeNodeAndWaitWithAutoRunIdleLogWatchdog('open-chatgpt', getAutoRunNodeDelayMs('open-chatgpt'));
@@ -13601,9 +13684,11 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   }
 
   if (await shouldRunNamedNode('chatgpt-web-login')) {
-    const cpaQueueEmail = await ensureCpaReloginQueueEmailReady(targetRun, totalRuns, attemptRuns);
-    if (!cpaQueueEmail) {
-      throw new Error('CPA 重登队列没有可执行邮箱，已停止，未回退到本地邮箱列表。');
+    if (shouldUseCpaReloginQueueForAutoRun(await getState())) {
+      const cpaQueueEmail = await ensureCpaReloginQueueEmailReady(targetRun, totalRuns, attemptRuns);
+      if (!cpaQueueEmail) {
+        throw new Error('CPA 重登队列没有可执行邮箱，已停止，未回退到本地邮箱列表。');
+      }
     }
   } else if (await shouldRunNamedNode('oauth-login')) {
     await ensureLoginConfigEmailReady(targetRun, totalRuns, attemptRuns);
@@ -14476,6 +14561,7 @@ async function executeReloginBoundEmail(state = {}) {
 
 const stepExecutorsByKey = {
   'cpa-relogin-prepare': (state) => executeCpaReloginPrepareNode(state),
+  'outlook-pool-prepare': (state) => executeOutlookPoolPrepareNode(state),
   'open-chatgpt': () => step1Executor.executeStep1(),
   'submit-signup-email': (state) => step2Executor.executeStep2(state),
   'fill-password': (state) => step3Executor.executeStep3(state),

@@ -1368,6 +1368,9 @@
               });
             }
           }
+          if (Object.prototype.hasOwnProperty.call(message.payload || {}, 'loginFlowMode')) {
+            await setState({ loginFlowMode: String(message.payload.loginFlowMode || '').trim() });
+          }
           const state = await getState();
           const autoRunStartValidation = validateAutoRunStart(state, { state });
           if (autoRunStartValidation?.ok === false) {
@@ -1407,6 +1410,9 @@
                 contributionQq,
               });
             }
+          }
+          if (Object.prototype.hasOwnProperty.call(message.payload || {}, 'loginFlowMode')) {
+            await setState({ loginFlowMode: String(message.payload.loginFlowMode || '').trim() });
           }
           const state = await getState();
           const autoRunStartValidation = validateAutoRunStart(state, { state });
@@ -1515,6 +1521,7 @@
             || Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
             || Object.prototype.hasOwnProperty.call(updates, 'signupMethod')
             || Object.prototype.hasOwnProperty.call(updates, 'panelMode')
+            || Object.prototype.hasOwnProperty.call(updates, 'loginFlowMode')
             || Object.prototype.hasOwnProperty.call(updates, 'activeFlowId')
             || Object.prototype.hasOwnProperty.call(updates, 'contributionMode')
           ) {
@@ -1530,6 +1537,8 @@
             && Boolean(currentState?.plusModeEnabled) !== Boolean(updates.plusModeEnabled);
           const panelModeChanged = Object.prototype.hasOwnProperty.call(updates, 'panelMode')
             && String(currentState?.panelMode || '').trim() !== String(updates.panelMode || '').trim();
+          const loginFlowModeChanged = Object.prototype.hasOwnProperty.call(updates, 'loginFlowMode')
+            && String(currentState?.loginFlowMode || '').trim() !== String(updates.loginFlowMode || '').trim();
           const activeFlowChanged = Object.prototype.hasOwnProperty.call(updates, 'activeFlowId')
             && String(currentState?.activeFlowId || '').trim() !== String(updates.activeFlowId || '').trim();
           const plusAccountAccessStrategyChanged = Object.prototype.hasOwnProperty.call(updates, 'plusAccountAccessStrategy')
@@ -1546,6 +1555,7 @@
             : Boolean(currentState?.plusModeEnabled);
           const stepModeChanged = modeChanged
             || panelModeChanged
+            || loginFlowModeChanged
             || activeFlowChanged
             || plusAccountAccessStrategyChanged
             || signupMethodChanged

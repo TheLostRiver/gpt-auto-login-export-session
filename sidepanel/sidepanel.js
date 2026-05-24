@@ -646,6 +646,7 @@ let nexSmsCountryMenuSearchKeyword = '';
 const nexSmsCountrySearchTextById = new Map();
 let stepDefinitions = getStepDefinitionsForMode(false, {
   panelMode: DEFAULT_PANEL_MODE,
+  loginFlowMode: DEFAULT_LOGIN_FLOW_MODE,
   plusPaymentMethod: currentPlusPaymentMethod,
   plusAccountAccessStrategy: currentPlusAccountAccessStrategy,
   signupMethod: currentSignupMethod,
@@ -653,6 +654,7 @@ let stepDefinitions = getStepDefinitionsForMode(false, {
 });
 let workflowNodes = getWorkflowNodesForMode(false, {
   panelMode: DEFAULT_PANEL_MODE,
+  loginFlowMode: DEFAULT_LOGIN_FLOW_MODE,
   plusPaymentMethod: currentPlusPaymentMethod,
   plusAccountAccessStrategy: currentPlusAccountAccessStrategy,
   signupMethod: currentSignupMethod,
@@ -8594,6 +8596,7 @@ function updateSignupMethodUI(options = {}) {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
     plusPaymentMethod: getSelectedPlusPaymentMethod(latestState),
+    loginFlowMode: getSelectedLoginFlowMode(),
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
     signupMethod: selectedMethod,
     phoneSignupReloginAfterBindEmailEnabled: typeof inputPhoneSignupReloginAfterBindEmail !== 'undefined' && inputPhoneSignupReloginAfterBindEmail
@@ -9830,10 +9833,14 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     ? LOCAL_CPA_JSON_NO_RT_PANEL_MODE
     : 'local-cpa-json-no-rt';
   const nextPanelMode = String(options.panelMode || (typeof latestState !== 'undefined' ? latestState?.panelMode : '') || '').trim().toLowerCase();
+  const nextLoginFlowMode = normalizeLoginFlowMode(options.loginFlowMode || (typeof latestState !== 'undefined' ? latestState?.loginFlowMode : ''));
   const useNoRtWorkflow = nextPanelMode === noRtPanelMode;
   const currentlyUsingNoRtWorkflow = (typeof workflowNodes !== 'undefined' ? workflowNodes : [])
     .some((node) => String(node?.nodeId || '').trim() === 'local-cpa-json-export');
   const noRtWorkflowModeChanged = useNoRtWorkflow !== currentlyUsingNoRtWorkflow;
+  const currentlyUsingOutlookPoolWorkflow = (typeof workflowNodes !== 'undefined' ? workflowNodes : [])
+    .some((node) => String(node?.nodeId || '').trim() === 'outlook-pool-prepare');
+  const outlookPoolWorkflowModeChanged = (nextLoginFlowMode === LOGIN_FLOW_MODE_OUTLOOK_POOL) !== currentlyUsingOutlookPoolWorkflow;
   const nextActiveFlowId = String(
     options.activeFlowId
     || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '')
@@ -9857,6 +9864,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     || nextSignupMethod !== currentSignupMethod
     || nextPhoneSignupReloginAfterBindEmailEnabled !== currentPhoneSignupReloginAfterBindEmailEnabled
     || noRtWorkflowModeChanged
+    || outlookPoolWorkflowModeChanged
     || paymentTitleChanged;
   if (!shouldRender) {
     return;
@@ -9865,6 +9873,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
   rebuildStepDefinitionState(nextPlusModeEnabled, {
     activeFlowId: nextActiveFlowId,
     ...(nextPanelMode ? { panelMode: nextPanelMode } : {}),
+    loginFlowMode: nextLoginFlowMode,
     plusPaymentMethod: nextPaymentMethod,
     plusAccountAccessStrategy: nextAccountAccessStrategy,
     signupMethod: nextSignupMethod,
@@ -9890,6 +9899,7 @@ function applySettingsState(state) {
     syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
       activeFlowId: state?.flowId || state?.activeFlowId,
       panelMode: state?.panelMode,
+      loginFlowMode: state?.loginFlowMode,
       plusPaymentMethod: state?.plusPaymentMethod,
       plusAccountAccessStrategy: state?.plusAccountAccessStrategy,
       signupMethod: stepDefinitionState.signupMethod,
@@ -10047,6 +10057,9 @@ function applySettingsState(state) {
   selectPanelMode.value = getExportTargetForPanelMode(
     state?.panelMode || (typeof DEFAULT_PANEL_MODE === 'string' ? DEFAULT_PANEL_MODE : 'local-cpa-json')
   );
+  if (typeof selectFlow !== 'undefined' && selectFlow) {
+    selectFlow.value = normalizeLoginFlowMode(state?.loginFlowMode);
+  }
   if (typeof selectAccountAccessStrategy !== 'undefined' && selectAccountAccessStrategy) {
     selectAccountAccessStrategy.value = getAccountAccessStrategyUiValueForState(state);
   }
@@ -13968,6 +13981,7 @@ async function startAutoRunFromCurrentSettings() {
     payload: {
       totalRuns,
       delayMinutes,
+      loginFlowMode: getSelectedLoginFlowMode(),
       autoRunSkipFailures,
       autoRunRetryNonFreeTrial,
       autoRunRetryPaypalCallback,
@@ -14235,6 +14249,7 @@ inputPlusModeEnabled?.addEventListener('change', () => {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, getSelectedPlusPaymentMethod(), {
     render: true,
+    loginFlowMode: getSelectedLoginFlowMode(),
     signupMethod: stepDefinitionState.signupMethod,
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
   });
@@ -14264,6 +14279,7 @@ selectPlusPaymentMethod?.addEventListener('change', () => {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, selectPlusPaymentMethod.value, {
     render: true,
+    loginFlowMode: getSelectedLoginFlowMode(),
     signupMethod: stepDefinitionState.signupMethod,
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
   });
@@ -14344,6 +14360,7 @@ selectPlusPaymentMethod?.addEventListener('change', () => {
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
     render: true,
     plusPaymentMethod: selectPlusPaymentMethod.value,
+    loginFlowMode: getSelectedLoginFlowMode(),
     signupMethod: stepDefinitionState.signupMethod,
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
   });
@@ -14536,6 +14553,7 @@ selectPanelMode.addEventListener('change', async () => {
     syncStepDefinitionsForMode(currentPlusModeEnabled, {
       activeFlowId: latestState?.activeFlowId,
       panelMode: nextPanelMode,
+      loginFlowMode: getSelectedLoginFlowMode(),
       plusPaymentMethod: currentPlusPaymentMethod,
       plusAccountAccessStrategy: nextExportSettings.plusAccountAccessStrategy,
       signupMethod: currentSignupMethod,
@@ -14586,6 +14604,7 @@ selectAccountAccessStrategy?.addEventListener('change', async () => {
     syncStepDefinitionsForMode(currentPlusModeEnabled, {
       activeFlowId: latestState?.activeFlowId,
       panelMode: nextExportSettings.panelMode,
+      loginFlowMode: getSelectedLoginFlowMode(),
       plusPaymentMethod: currentPlusPaymentMethod,
       plusAccountAccessStrategy: nextExportSettings.plusAccountAccessStrategy,
       signupMethod: currentSignupMethod,
@@ -15572,11 +15591,34 @@ inputPhoneSignupReloginAfterBindEmail?.addEventListener('change', () => {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
     plusPaymentMethod: getSelectedPlusPaymentMethod(latestState),
+    loginFlowMode: getSelectedLoginFlowMode(),
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
     signupMethod: stepDefinitionState.signupMethod,
     phoneSignupReloginAfterBindEmailEnabled: Boolean(inputPhoneSignupReloginAfterBindEmail.checked),
   });
   updatePhoneVerificationSettingsUI();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+selectFlow?.addEventListener('change', () => {
+  if (selectFlow) {
+    selectFlow.value = normalizeLoginFlowMode(selectFlow.value);
+  }
+  syncLatestState({
+    loginFlowMode: getSelectedLoginFlowMode(),
+  });
+  syncStepDefinitionsForMode(currentPlusModeEnabled, {
+    activeFlowId: latestState?.activeFlowId,
+    panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
+    loginFlowMode: getSelectedLoginFlowMode(),
+    plusPaymentMethod: currentPlusPaymentMethod,
+    plusAccountAccessStrategy: typeof getSelectedExportSettings === 'function'
+      ? getSelectedExportSettings().plusAccountAccessStrategy
+      : currentPlusAccountAccessStrategy,
+    signupMethod: currentSignupMethod,
+    phoneSignupReloginAfterBindEmailEnabled: currentPhoneSignupReloginAfterBindEmailEnabled,
+  });
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
 });
@@ -16865,6 +16907,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           {
             render: true,
             panelMode: latestState?.panelMode,
+            loginFlowMode: latestState?.loginFlowMode,
             signupMethod: stepDefinitionState.signupMethod,
             plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
           }

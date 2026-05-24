@@ -16,6 +16,8 @@
     'access-token',
     'session-token-bundle',
   ]);
+  const DEFAULT_LOGIN_FLOW_MODE = 'cpa-relogin';
+  const LOGIN_FLOW_MODE_OUTLOOK_POOL = 'outlook-pool';
 
   function normalizeKimiCpaPanelMode(value = '') {
     const normalized = String(value || '').trim().toLowerCase();
@@ -24,9 +26,16 @@
       : 'cpa';
   }
 
+  function normalizeKimiCpaLoginFlowMode(value = '') {
+    return String(value || '').trim().toLowerCase() === LOGIN_FLOW_MODE_OUTLOOK_POOL
+      ? LOGIN_FLOW_MODE_OUTLOOK_POOL
+      : DEFAULT_LOGIN_FLOW_MODE;
+  }
+
   function buildKimiCpaReloginSettingsPatch(state = {}) {
     return {
       panelMode: normalizeKimiCpaPanelMode(state?.panelMode),
+      loginFlowMode: normalizeKimiCpaLoginFlowMode(state?.loginFlowMode),
       plusModeEnabled: false,
       plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
       signupMethod: SIGNUP_METHOD_EMAIL,
