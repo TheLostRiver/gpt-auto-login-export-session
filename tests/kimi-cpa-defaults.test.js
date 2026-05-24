@@ -27,3 +27,14 @@ test('Kimi CPA relogin defaults preserve session token export panel modes', () =
     assert.equal(state.plusAccountAccessStrategy, 'cpa_codex_session');
   }
 });
+
+test('Kimi CPA relogin defaults preserve Outlook pool login flow mode', () => {
+  const state = kimiCpaDefaults.applyKimiCpaReloginSettingsPatch({
+    loginFlowMode: 'outlook-pool',
+    mailProvider: 'hotmail-api',
+  });
+
+  assert.equal(state.panelMode, 'cpa');
+  assert.equal(state.loginFlowMode, 'outlook-pool');
+  assert.equal(state.mailProvider, 'hotmail-api');
+});

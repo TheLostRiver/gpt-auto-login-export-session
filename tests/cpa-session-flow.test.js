@@ -78,6 +78,65 @@ test('session token export modes use CPA relogin and local token export', () => 
   }
 });
 
+test('Outlook pool login flow uses selected mailbox pool instead of CPA relogin queue', () => {
+  const workflow = steps.getWorkflow({
+    panelMode: 'cpa',
+    loginFlowMode: 'outlook-pool',
+    plusModeEnabled: false,
+    plusAccountAccessStrategy: 'cpa_codex_session',
+  });
+
+  assert.deepEqual(workflow.nodeIds, [
+    'outlook-pool-prepare',
+    'open-chatgpt',
+    'chatgpt-web-login',
+    'fetch-login-code',
+    'cpa-session-import',
+  ]);
+  assert.equal(workflow.nodeIds.includes('cpa-relogin-prepare'), false);
+});
+
+test('Outlook pool token export flow keeps local token export and does not use CPA relogin queue', () => {
+  const workflow = steps.getWorkflow({
+    panelMode: 'session-token-bundle',
+    loginFlowMode: 'outlook-pool',
+    plusModeEnabled: false,
+    plusAccountAccessStrategy: 'cpa_codex_session',
+  });
+
+  assert.deepEqual(workflow.nodeIds, [
+    'outlook-pool-prepare',
+    'open-chatgpt',
+    'chatgpt-web-login',
+    'fetch-login-code',
+    'session-token-export',
+  ]);
+  assert.equal(workflow.nodeIds.includes('cpa-relogin-prepare'), false);
+});
+
+test('Outlook pool login flow is available in sidepanel and preserved by capabilities', () => {
+  const sidepanelHtml = fs.readFileSync(path.join(__dirname, '..', 'sidepanel/sidepanel.html'), 'utf8');
+  const sidepanelJs = fs.readFileSync(path.join(__dirname, '..', 'sidepanel/sidepanel.js'), 'utf8');
+  const backgroundSource = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+
+  assert.match(sidepanelHtml, /<option value="outlook-pool">从选定的邮箱池里执行登录\/注册<\/option>/);
+  assert.match(sidepanelJs, /selectFlow/);
+  assert.match(backgroundSource, /loginFlowMode:\s*DEFAULT_LOGIN_FLOW_MODE/);
+});
+
+test('Outlook pool prepare node allocates Hotmail pool account and never prepares CPA relogin queue', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/async function executeOutlookPoolPrepareNode[\s\S]*?\n}\n\nasync function executeCpaReloginPrepareNode/);
+  assert.ok(fnMatch, 'executeOutlookPoolPrepareNode function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(fn, /ensureHotmailAccountForFlow\(/);
+  assert.match(fn, /markUsed:\s*true/);
+  assert.match(fn, /account\.email/);
+  assert.doesNotMatch(fn, /prepareCpaReloginQueueForAutoRun/);
+  assert.match(source, /'outlook-pool-prepare': \(state\) => executeOutlookPoolPrepareNode\(state\)/);
+});
+
 test('session token export modes force SESSION JSON access strategy', () => {
   const registry = globalThis.MultiPageFlowCapabilities.createFlowCapabilityRegistry();
 

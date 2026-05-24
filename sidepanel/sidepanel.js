@@ -82,6 +82,7 @@ const configMenu = document.getElementById('config-menu');
 const btnExportSettings = document.getElementById('btn-export-settings');
 const btnImportSettings = document.getElementById('btn-import-settings');
 const inputImportSettingsFile = document.getElementById('input-import-settings-file');
+const selectFlow = document.getElementById('select-flow');
 const selectPanelMode = document.getElementById('select-panel-mode');
 const rowAccountAccessStrategy = document.getElementById('row-account-access-strategy');
 const selectAccountAccessStrategy = document.getElementById('select-account-access-strategy');
@@ -577,6 +578,8 @@ const LOCAL_CPA_JSON_NO_RT_PANEL_MODE = 'local-cpa-json-no-rt';
 const ACCOUNT_TOKEN_PANEL_MODE = 'account-token';
 const ACCESS_TOKEN_PANEL_MODE = 'access-token';
 const SESSION_TOKEN_BUNDLE_PANEL_MODE = 'session-token-bundle';
+const DEFAULT_LOGIN_FLOW_MODE = 'cpa-relogin';
+const LOGIN_FLOW_MODE_OUTLOOK_POOL = 'outlook-pool';
 const SESSION_TOKEN_EXPORT_PANEL_MODES = Object.freeze([
   ACCOUNT_TOKEN_PANEL_MODE,
   ACCESS_TOKEN_PANEL_MODE,
@@ -603,6 +606,12 @@ function isSessionTokenExportPanelMode(panelMode = '') {
 function isCpaReloginExportPanelMode(panelMode = '') {
   const normalized = String(panelMode || '').trim().toLowerCase();
   return normalized === 'cpa' || isSessionTokenExportPanelMode(normalized);
+}
+
+function normalizeLoginFlowMode(value = '') {
+  return String(value || '').trim().toLowerCase() === LOGIN_FLOW_MODE_OUTLOOK_POOL
+    ? LOGIN_FLOW_MODE_OUTLOOK_POOL
+    : DEFAULT_LOGIN_FLOW_MODE;
 }
 const SIGNUP_METHOD_EMAIL = 'email';
 const SIGNUP_METHOD_PHONE = 'phone';
@@ -941,6 +950,9 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
   if (typeof options !== 'string' && options?.panelMode !== undefined) {
     requestOptions.panelMode = options.panelMode;
   }
+  if (typeof options !== 'string' && options?.loginFlowMode !== undefined) {
+    requestOptions.loginFlowMode = normalizeLoginFlowMode(options.loginFlowMode);
+  }
   return (window.MultiPageStepDefinitions?.getSteps?.(requestOptions) || [])
     .sort((left, right) => {
       const leftOrder = Number.isFinite(left.order) ? left.order : left.id;
@@ -986,6 +998,9 @@ function getWorkflowNodesForMode(plusModeEnabled = false, options = {}) {
   }
   if (typeof options !== 'string' && options?.panelMode !== undefined) {
     requestOptions.panelMode = options.panelMode;
+  }
+  if (typeof options !== 'string' && options?.loginFlowMode !== undefined) {
+    requestOptions.loginFlowMode = normalizeLoginFlowMode(options.loginFlowMode);
   }
   const nodes = window.MultiPageStepDefinitions?.getNodes?.(requestOptions);
   if (Array.isArray(nodes) && nodes.length) {
@@ -1069,9 +1084,11 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
   currentPlusAccountAccessStrategy = normalizeAccountAccessStrategySafe(rawAccountAccessStrategy);
   currentSignupMethod = normalizeSignupMethod(rawSignupMethod);
   currentPhoneSignupReloginAfterBindEmailEnabled = phoneSignupReloginAfterBindEmailEnabled;
+  const loginFlowMode = normalizeLoginFlowMode(options?.loginFlowMode || latestState?.loginFlowMode);
   stepDefinitions = getStepDefinitionsForMode(currentPlusModeEnabled, {
     activeFlowId: options?.activeFlowId,
     panelMode: options?.panelMode,
+    loginFlowMode,
     plusPaymentMethod: currentPlusPaymentMethod,
     plusAccountAccessStrategy: currentPlusAccountAccessStrategy,
     signupMethod: currentSignupMethod,
@@ -1081,6 +1098,7 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
     ? getWorkflowNodesForMode(currentPlusModeEnabled, {
       activeFlowId: options?.activeFlowId,
       panelMode: options?.panelMode,
+      loginFlowMode,
       plusPaymentMethod: currentPlusPaymentMethod,
       plusAccountAccessStrategy: currentPlusAccountAccessStrategy,
       signupMethod: currentSignupMethod,
@@ -2583,6 +2601,7 @@ function syncLatestState(nextState) {
 function getKimiCpaReloginSettingsPatch() {
   return window.KimiCpaDefaults?.buildKimiCpaReloginSettingsPatch?.(latestState) || {
     panelMode: isCpaReloginExportPanelMode(latestState?.panelMode) ? normalizePanelMode(latestState.panelMode) : 'cpa',
+    loginFlowMode: normalizeLoginFlowMode(latestState?.loginFlowMode),
     plusModeEnabled: false,
     plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
     signupMethod: SIGNUP_METHOD_EMAIL,
@@ -4317,6 +4336,7 @@ function collectSettingsPayload() {
   return {
     ...(contributionModeEnabled ? {} : {
       panelMode: effectivePanelMode,
+      loginFlowMode: getSelectedLoginFlowMode(),
     }),
     plusAccountAccessStrategy: effectivePlusAccountAccessStrategy,
     localCpaJsonPluginDir: typeof inputLocalCpaJsonPluginDir !== 'undefined' && inputLocalCpaJsonPluginDir
@@ -8442,6 +8462,14 @@ function getSelectedPanelMode() {
     ? resolveCurrentSidepanelCapabilities({ panelMode: resolvedPanelMode })
     : null;
   return capabilityState?.effectivePanelMode || capabilityState?.panelMode || resolvedPanelMode;
+}
+
+function getSelectedLoginFlowMode() {
+  return normalizeLoginFlowMode(
+    (typeof selectFlow !== 'undefined' && selectFlow
+      ? selectFlow.value
+      : latestState?.loginFlowMode) || DEFAULT_LOGIN_FLOW_MODE
+  );
 }
 
 function getSelectedSignupMethod() {

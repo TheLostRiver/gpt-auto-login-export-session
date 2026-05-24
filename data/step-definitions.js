@@ -10,6 +10,7 @@
   const ACCOUNT_TOKEN_PANEL_MODE = 'account-token';
   const ACCESS_TOKEN_PANEL_MODE = 'access-token';
   const SESSION_TOKEN_BUNDLE_PANEL_MODE = 'session-token-bundle';
+  const LOGIN_FLOW_MODE_OUTLOOK_POOL = 'outlook-pool';
   const SESSION_TOKEN_EXPORT_PANEL_MODES = Object.freeze([
     ACCOUNT_TOKEN_PANEL_MODE,
     ACCESS_TOKEN_PANEL_MODE,
@@ -71,8 +72,25 @@
     driverId: 'background/session-token-export',
     command: 'session-token-export',
   };
+  const OUTLOOK_POOL_PREPARE_STEP_DEFINITION = {
+    id: 1,
+    order: 10,
+    key: 'outlook-pool-prepare',
+    title: 'Outlook 邮箱池选择账号',
+    sourceId: 'hotmail-api',
+    driverId: 'background/outlook-pool',
+    command: 'outlook-pool-prepare',
+  };
+  const OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS = [
+    OUTLOOK_POOL_PREPARE_STEP_DEFINITION,
+    ...CPA_SESSION_LOGIN_STEP_DEFINITIONS.slice(1),
+  ];
   const SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS = [
     ...CPA_SESSION_LOGIN_STEP_DEFINITIONS.slice(0, -1),
+    SESSION_TOKEN_EXPORT_STEP_DEFINITION,
+  ];
+  const OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS = [
+    ...OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS.slice(0, -1),
     SESSION_TOKEN_EXPORT_STEP_DEFINITION,
   ];
 
@@ -368,6 +386,10 @@
     return normalizeSignupMethod(options?.resolvedSignupMethod || options?.signupMethod);
   }
 
+  function isOutlookPoolLoginFlowMode(options = {}) {
+    return String(options?.loginFlowMode || '').trim().toLowerCase() === LOGIN_FLOW_MODE_OUTLOOK_POOL;
+  }
+
   function getOpenAiModeStepDefinitions(options = {}) {
     const panelMode = String(options?.panelMode || '').trim().toLowerCase();
     const signupMethod = getResolvedSignupMethod(options);
@@ -380,9 +402,15 @@
       ];
     }
     if (panelMode === 'cpa') {
+      if (isOutlookPoolLoginFlowMode(options)) {
+        return OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS;
+      }
       return CPA_SESSION_LOGIN_STEP_DEFINITIONS;
     }
     if (SESSION_TOKEN_EXPORT_PANEL_MODES.includes(panelMode)) {
+      if (isOutlookPoolLoginFlowMode(options)) {
+        return OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS;
+      }
       return SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS;
     }
     const plusAccountAccessStrategy = normalizePlusAccountAccessStrategy(options?.plusAccountAccessStrategy);
@@ -503,7 +531,9 @@
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_CPA_SESSION_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS,
           ...CPA_SESSION_LOGIN_STEP_DEFINITIONS,
+          ...OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS,
           ...SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS,
+          ...OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS,
           LOCAL_CPA_JSON_NO_RT_EXPORT_STEP_DEFINITION,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
@@ -702,6 +732,9 @@
     PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
     PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
     CPA_SESSION_LOGIN_STEP_DEFINITIONS,
+    OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS,
+    OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS,
+    OUTLOOK_POOL_PREPARE_STEP_DEFINITION,
     SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS,
     SESSION_TOKEN_EXPORT_STEP_DEFINITION,
     PLUS_PAYPAL_STEP_DEFINITIONS,
