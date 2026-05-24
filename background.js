@@ -210,6 +210,13 @@ const CPA_SESSION_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSte
   plusModeEnabled: false,
   plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
 }) || [];
+const OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  panelMode: 'cpa',
+  loginFlowMode: LOGIN_FLOW_MODE_OUTLOOK_POOL,
+  plusModeEnabled: false,
+  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
+}) || CPA_SESSION_LOGIN_STEP_DEFINITIONS;
 const SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   panelMode: ACCOUNT_TOKEN_PANEL_MODE,
@@ -217,6 +224,13 @@ const SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinition
   plusModeEnabled: false,
   plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
 }) || [];
+const OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  panelMode: ACCOUNT_TOKEN_PANEL_MODE,
+  loginFlowMode: LOGIN_FLOW_MODE_OUTLOOK_POOL,
+  plusModeEnabled: false,
+  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
+}) || OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS;
 const PLUS_STEP_DEFINITIONS = PLUS_PAYPAL_STEP_DEFINITIONS;
 const ALL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getAllSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
@@ -4980,6 +4994,40 @@ async function syncHotmailAccounts(accounts) {
   return normalized;
 }
 
+async function assertHotmailAccountPersisted(accountId, expected = {}) {
+  const normalizedAccountId = String(accountId || '').trim();
+  if (!normalizedAccountId) {
+    throw new Error('Hotmail 账号持久化校验失败：缺少账号 ID。');
+  }
+
+  const persistedState = await getState();
+  const persistedAccount = findHotmailAccount(persistedState.hotmailAccounts, normalizedAccountId);
+  if (!persistedAccount) {
+    throw new Error(`Hotmail 账号持久化校验失败：账号 ${normalizedAccountId} 未写入账号池。`);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(expected, 'used')
+    && Boolean(persistedAccount.used) !== Boolean(expected.used)
+  ) {
+    throw new Error(
+      `Hotmail 账号持久化校验失败：账号 ${persistedAccount.email || normalizedAccountId} 的已用状态未保存。`
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(expected, 'lastUsedAt')
+    && Number(expected.lastUsedAt) > 0
+    && Number(persistedAccount.lastUsedAt) !== Number(expected.lastUsedAt)
+  ) {
+    throw new Error(
+      `Hotmail 账号持久化校验失败：账号 ${persistedAccount.email || normalizedAccountId} 的使用时间未保存。`
+    );
+  }
+
+  return persistedAccount;
+}
+
 async function upsertHotmailAccount(input) {
   const state = await getState();
   const accounts = normalizeHotmailAccounts(state.hotmailAccounts);
@@ -5065,6 +5113,16 @@ async function patchHotmailAccount(accountId, updates = {}, options = {}) {
   });
 
   await syncHotmailAccounts(accounts.map((item) => (item.id === account.id ? nextAccount : item)));
+  const expectedPersistence = {};
+  if (Object.prototype.hasOwnProperty.call(updates, 'used')) {
+    expectedPersistence.used = nextAccount.used;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'lastUsedAt')) {
+    expectedPersistence.lastUsedAt = nextAccount.lastUsedAt;
+  }
+  if (Object.keys(expectedPersistence).length) {
+    await assertHotmailAccountPersisted(nextAccount.id, expectedPersistence);
+  }
 
   if (!options?.preserveCurrentSelection && state.currentHotmailAccountId === account.id && shouldClearHotmailCurrentSelection(nextAccount)) {
     await setState({ currentHotmailAccountId: null });
@@ -5092,6 +5150,10 @@ async function setCurrentHotmailAccount(accountId, options = {}) {
       account.used = true;
     }
     await syncHotmailAccounts(accounts.map((item) => (item.id === account.id ? account : item)));
+    await assertHotmailAccountPersisted(account.id, {
+      used: account.used,
+      lastUsedAt: account.lastUsedAt,
+    });
   }
 
   await setState({ currentHotmailAccountId: account.id });
@@ -5114,6 +5176,80 @@ function isPendingHotmailVerificationCandidate(candidate) {
     && candidate.status === 'pending'
     && !candidate.used
     && Boolean(candidate.refreshToken);
+}
+
+function getHotmailAvailabilityCounts(accounts = [], state = {}) {
+  const normalizedAccounts = normalizeHotmailAccounts(accounts);
+  const hotmailAliasEnabled = Boolean(state?.hotmailAliasEnabled);
+  return normalizedAccounts.reduce((counts, account) => {
+    counts.total += 1;
+    if (account.refreshToken) {
+      counts.withRefreshToken += 1;
+    } else {
+      counts.missingRefreshToken += 1;
+    }
+    if (account.used) {
+      counts.used += 1;
+    } else {
+      counts.unused += 1;
+    }
+    if (account.status === 'authorized') {
+      counts.authorized += 1;
+    } else if (account.status === 'pending') {
+      counts.pending += 1;
+    } else if (account.status === 'error') {
+      counts.error += 1;
+    } else {
+      counts.otherStatus += 1;
+    }
+    if (isAuthorizedHotmailRunAccount(account)) {
+      counts.runnable += 1;
+    }
+    if (isPendingHotmailVerificationCandidate(account)) {
+      counts.pendingRunnable += 1;
+    }
+    if (
+      hotmailAliasEnabled
+      && typeof isHotmailAliasCapacityExhausted === 'function'
+      && isHotmailAliasCapacityExhausted(account, state)
+    ) {
+      counts.aliasExhausted += 1;
+    }
+    return counts;
+  }, {
+    total: 0,
+    authorized: 0,
+    pending: 0,
+    error: 0,
+    otherStatus: 0,
+    used: 0,
+    unused: 0,
+    withRefreshToken: 0,
+    missingRefreshToken: 0,
+    runnable: 0,
+    pendingRunnable: 0,
+    aliasExhausted: 0,
+  });
+}
+
+function buildHotmailAccountAvailabilityError(accounts = [], state = {}, cause = null) {
+  const counts = getHotmailAvailabilityCounts(accounts, state);
+  const details = [
+    `账号池总数 ${counts.total}`,
+    `已授权 ${counts.authorized}`,
+    `待校验 ${counts.pending}`,
+    `异常 ${counts.error}`,
+    `未用 ${counts.unused}`,
+    `已用 ${counts.used}`,
+    `缺 refresh token ${counts.missingRefreshToken}`,
+    `可直接分配 ${counts.runnable}`,
+    `可尝试校验 ${counts.pendingRunnable}`,
+  ];
+  if (counts.aliasExhausted > 0) {
+    details.push(`别名额度已满 ${counts.aliasExhausted}`);
+  }
+  const suffix = cause ? `；最后错误：${cause.message || cause}` : '';
+  return new Error(`没有可用的 Hotmail 账号。${details.join('，')}。请确认 Outlook 邮箱池中存在未用、带 refresh token、且可校验通过的账号${suffix}`);
 }
 
 function compareHotmailAccountAllocationPriority(left, right) {
@@ -5233,7 +5369,7 @@ async function ensureHotmailAccountForFlow(options = {}) {
   if (lastAllocationError) {
     throw lastAllocationError;
   }
-  throw new Error('没有可用的 Hotmail 账号。请先在侧边栏添加至少一个带刷新令牌（refresh token）的账号。');
+  throw buildHotmailAccountAvailabilityError(accounts, state);
 }
 
 function buildHotmailLocalEndpoint(baseUrl, path) {
@@ -5587,7 +5723,7 @@ async function ensureHotmailMailboxReadyForAutoRunRound(options = {}) {
     return '当前轮';
   };
   const exhaustedAccountIds = new Set();
-  let preferredAccountId = state.currentHotmailAccountId || null;
+  let preferredAccountId = null;
   let lastError = null;
 
   while (true) {
@@ -5600,9 +5736,9 @@ async function ensureHotmailMailboxReadyForAutoRunRound(options = {}) {
       .filter((candidate) => isPendingHotmailVerificationCandidate(candidate) && !exhaustedAccountIds.has(candidate.id));
     if (!remainingAuthorizedAccounts.length && !remainingPendingAccounts.length) {
       if (lastError) {
-        throw new Error(`自动运行${buildRoundLabel()}开始前未找到可通过校验的 Hotmail 账号：${lastError.message}`);
+        throw buildHotmailAccountAvailabilityError(latestAccounts, latestState, lastError);
       }
-      throw new Error('没有可用的 Hotmail 账号。请先在侧边栏添加至少一个带刷新令牌（refresh token）的账号。');
+      throw buildHotmailAccountAvailabilityError(latestAccounts, latestState);
     }
 
     let account = null;
@@ -5619,7 +5755,7 @@ async function ensureHotmailMailboxReadyForAutoRunRound(options = {}) {
         excludeIds: [...exhaustedAccountIds],
       });
       if (!pendingAccount) {
-        throw new Error('没有可用的 Hotmail 账号。请先在侧边栏添加至少一个带刷新令牌（refresh token）的账号。');
+        throw buildHotmailAccountAvailabilityError(latestAccounts, latestState);
       }
       account = await setCurrentHotmailAccount(pendingAccount.id, {
         markUsed: false,
@@ -13452,10 +13588,18 @@ async function executeOutlookPoolPrepareNode(state = {}) {
     throw new Error('从选定的邮箱池里执行登录/注册：当前只支持 Outlook/Hotmail 邮箱池，请先把邮箱提供方切换为 Outlook Email。');
   }
 
+  const targetRun = Number(currentState.autoRunCurrentRun) || 0;
+  const totalRuns = Number(currentState.autoRunTotalRuns) || 0;
+  const attemptRun = Number(currentState.autoRunAttemptRun) || 1;
+  const verifiedAccount = await ensureHotmailMailboxReadyForAutoRunRound({
+    targetRun,
+    totalRuns,
+    attemptRun,
+  });
   const account = await ensureHotmailAccountForFlow({
     allowAllocate: true,
     markUsed: true,
-    preferredAccountId: currentState.currentHotmailAccountId || null,
+    preferredAccountId: verifiedAccount?.id || currentState.currentHotmailAccountId || null,
     allowUsedCurrent: false,
   });
   const email = String(account.email || '').trim();
@@ -14796,7 +14940,9 @@ const plusGpcSub2ApiSessionStepRegistry = buildStepRegistry(PLUS_GPC_SUB2API_SES
 const plusGpcCpaSessionStepRegistry = buildStepRegistry(PLUS_GPC_CPA_SESSION_STEP_DEFINITIONS);
 const localCpaJsonNoRtStepRegistry = buildStepRegistry(LOCAL_CPA_JSON_NO_RT_STEP_DEFINITIONS);
 const cpaSessionLoginStepRegistry = buildStepRegistry(CPA_SESSION_LOGIN_STEP_DEFINITIONS);
+const outlookPoolSessionLoginStepRegistry = buildStepRegistry(OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS);
 const sessionTokenExportLoginStepRegistry = buildStepRegistry(SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS);
+const outlookPoolSessionTokenExportLoginStepRegistry = buildStepRegistry(OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS);
 
 function getStepRegistryForState(state = {}) {
   const activeFlowId = String(state?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
@@ -14804,10 +14950,14 @@ function getStepRegistryForState(state = {}) {
     throw new Error(`当前尚未注册 flow=${activeFlowId} 的步骤执行器。`);
   }
   if (isSessionTokenExportPanelMode(getPanelMode(state))) {
-    return sessionTokenExportLoginStepRegistry;
+    return normalizeLoginFlowMode(state?.loginFlowMode) === LOGIN_FLOW_MODE_OUTLOOK_POOL
+      ? outlookPoolSessionTokenExportLoginStepRegistry
+      : sessionTokenExportLoginStepRegistry;
   }
   if (getPanelMode(state) === 'cpa') {
-    return cpaSessionLoginStepRegistry;
+    return normalizeLoginFlowMode(state?.loginFlowMode) === LOGIN_FLOW_MODE_OUTLOOK_POOL
+      ? outlookPoolSessionLoginStepRegistry
+      : cpaSessionLoginStepRegistry;
   }
   if (getPanelMode(state) === 'local-cpa-json-no-rt') {
     return localCpaJsonNoRtStepRegistry;

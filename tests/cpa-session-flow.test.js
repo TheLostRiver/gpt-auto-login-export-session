@@ -12,6 +12,7 @@ require('../background/steps/wait-registration-success.js');
 require('../background/steps/open-chatgpt.js');
 require('../background/steps/chatgpt-web-login.js');
 require('../background/message-router.js');
+require('../background/auto-run-controller.js');
 
 const steps = globalThis.MultiPageStepDefinitions;
 
@@ -137,6 +138,41 @@ test('Outlook pool prepare node allocates Hotmail pool account and never prepare
   assert.match(source, /'outlook-pool-prepare': \(state\) => executeOutlookPoolPrepareNode\(state\)/);
 });
 
+test('Outlook pool prepare verifies pending Hotmail accounts before marking one used', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/async function executeOutlookPoolPrepareNode[\s\S]*?\n}\n\nasync function runAutoSequenceFromNode/);
+  assert.ok(fnMatch, 'executeOutlookPoolPrepareNode function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(fn, /const verifiedAccount = await ensureHotmailMailboxReadyForAutoRunRound\(/);
+  assert.match(fn, /preferredAccountId:\s*verifiedAccount\?\.id \|\| currentState\.currentHotmailAccountId \|\| null/);
+  assert.match(fn, /markUsed:\s*true/);
+});
+
+test('Hotmail allocation failure includes account pool diagnostics', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  assert.match(source, /function buildHotmailAccountAvailabilityError\(/);
+  assert.match(source, /账号池总数/);
+  assert.match(source, /待校验/);
+  assert.match(source, /已用/);
+  assert.match(source, /缺 refresh token/);
+  assert.match(source, /throw buildHotmailAccountAvailabilityError\(accounts/);
+});
+
+test('background executor registry switches to Outlook pool nodes for Outlook pool login flow', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/function getStepRegistryForState[\s\S]*?\n}\n\nasync function requestOAuthUrlFromPanel/);
+  assert.ok(fnMatch, 'getStepRegistryForState function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(source, /const OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS = self\.MultiPageStepDefinitions\?\.getSteps\?\.\(\{/);
+  assert.match(source, /loginFlowMode:\s*LOGIN_FLOW_MODE_OUTLOOK_POOL/);
+  assert.match(source, /const outlookPoolSessionLoginStepRegistry = buildStepRegistry\(OUTLOOK_POOL_SESSION_LOGIN_STEP_DEFINITIONS\)/);
+  assert.match(source, /const outlookPoolSessionTokenExportLoginStepRegistry = buildStepRegistry\(OUTLOOK_POOL_SESSION_TOKEN_EXPORT_LOGIN_STEP_DEFINITIONS\)/);
+  assert.match(fn, /normalizeLoginFlowMode\(state\?\.loginFlowMode\) === LOGIN_FLOW_MODE_OUTLOOK_POOL\s*\?\s*outlookPoolSessionTokenExportLoginStepRegistry\s*:\s*sessionTokenExportLoginStepRegistry/);
+  assert.match(fn, /normalizeLoginFlowMode\(state\?\.loginFlowMode\) === LOGIN_FLOW_MODE_OUTLOOK_POOL\s*\?\s*outlookPoolSessionLoginStepRegistry\s*:\s*cpaSessionLoginStepRegistry/);
+});
+
 test('Hotmail allocation marks non-alias accounts as used so the next run cannot reuse them', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
   const fnMatch = source.match(/async function setCurrentHotmailAccount[\s\S]*?\n}\n\nfunction isAuthorizedHotmailRunAccount/);
@@ -145,6 +181,28 @@ test('Hotmail allocation marks non-alias accounts as used so the next run cannot
 
   assert.match(fn, /if \(markUsed\) \{[\s\S]*account\.lastUsedAt = Date\.now\(\);/);
   assert.match(fn, /if \(!isHotmailAliasEnabled\(state\)\) \{[\s\S]*account\.used = true;/);
+  assert.match(fn, /await assertHotmailAccountPersisted\(account\.id,\s*\{[\s\S]*used:\s*account\.used/);
+});
+
+test('manual Hotmail used toggle verifies persisted account state after saving', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/async function patchHotmailAccount[\s\S]*?\n}\n\nasync function setCurrentHotmailAccount/);
+  assert.ok(fnMatch, 'patchHotmailAccount function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(fn, /await syncHotmailAccounts\(/);
+  assert.match(fn, /await assertHotmailAccountPersisted\(nextAccount\.id,\s*expectedPersistence/);
+  assert.match(fn, /Object\.prototype\.hasOwnProperty\.call\(updates,\s*'used'\)/);
+});
+
+test('Hotmail preflight does not prefer the previous current account for a new auto-run round', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/async function ensureHotmailMailboxReadyForAutoRunRound[\s\S]*?\n}\n\nasync function testHotmailAccountMailAccess/);
+  assert.ok(fnMatch, 'ensureHotmailMailboxReadyForAutoRunRound function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(fn, /let preferredAccountId = null;/);
+  assert.doesNotMatch(fn, /let preferredAccountId = state\.currentHotmailAccountId \|\| null;/);
 });
 
 test('auto-run only requires CPA queue email when chatgpt-web-login is actually backed by CPA relogin queue', () => {
@@ -203,6 +261,79 @@ test('auto-run applies selected Outlook pool flow before preparing the CPA relog
   assert.equal(queuePrepModes[0], 'outlook-pool');
   assert.equal(startedTotalRuns, 1);
   assert.equal(setStateCalls.some((updates) => updates.loginFlowMode === 'outlook-pool'), true);
+});
+
+test('auto-run starts a fresh Outlook pool round from the workflow first node', async () => {
+  const executedStarts = [];
+  const preflightCalls = [];
+  let state = {
+    panelMode: 'cpa',
+    loginFlowMode: 'outlook-pool',
+    nodeStatuses: {
+      'outlook-pool-prepare': 'pending',
+      'open-chatgpt': 'pending',
+      'chatgpt-web-login': 'pending',
+    },
+  };
+  const runtimeState = {
+    autoRunActive: false,
+    autoRunCurrentRun: 0,
+    autoRunAttemptRun: 0,
+    autoRunSessionId: 0,
+  };
+
+  const controller = globalThis.MultiPageBackgroundAutoRunController.createAutoRunController({
+    addLog: async () => {},
+    AUTO_RUN_MAX_RETRIES_PER_ROUND: 0,
+    AUTO_RUN_RETRY_DELAY_MS: 0,
+    AUTO_RUN_TIMER_KIND_BEFORE_RETRY: 'before-retry',
+    AUTO_RUN_TIMER_KIND_BETWEEN_ROUNDS: 'between-rounds',
+    broadcastAutoRunStatus: async () => {},
+    chrome: {
+      runtime: {
+        sendMessage: async () => {},
+      },
+    },
+    clearStopRequest: () => {},
+    createAutoRunSessionId: () => 101,
+    ensureHotmailMailboxReadyForAutoRunRound: async (payload) => preflightCalls.push(payload),
+    getAutoRunStatusPayload: (phase, payload) => ({ autoRunPhase: phase, ...payload }),
+    getErrorMessage: (error) => error?.message || String(error || ''),
+    getFirstUnfinishedNodeId: (statuses, currentState = {}) => {
+      const nodeOrder = currentState.loginFlowMode === 'outlook-pool'
+        ? ['outlook-pool-prepare', 'open-chatgpt', 'chatgpt-web-login']
+        : ['cpa-relogin-prepare', 'open-chatgpt', 'chatgpt-web-login'];
+      return nodeOrder.find((nodeId) => (statuses[nodeId] || 'pending') === 'pending') || '';
+    },
+    getStopRequested: () => false,
+    getPendingAutoRunTimerPlan: () => null,
+    getRunningNodeIds: () => [],
+    getState: async () => state,
+    hasSavedNodeProgress: () => false,
+    resetState: async () => {
+      state = { nodeStatuses: { ...state.nodeStatuses } };
+    },
+    runAutoSequenceFromNode: async (startNodeId) => {
+      executedStarts.push(startNodeId);
+    },
+    runtime: {
+      get: () => runtimeState,
+      set: (updates) => Object.assign(runtimeState, updates),
+    },
+    setState: async (updates) => {
+      state = { ...state, ...updates };
+    },
+    sleepWithStop: async () => {},
+    throwIfAutoRunSessionStopped: () => {},
+    waitForRunningNodesToFinish: async () => state,
+  });
+
+  controller.startAutoRunLoop(1, { mode: 'restart' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(executedStarts, ['outlook-pool-prepare']);
+  assert.equal(preflightCalls.length, 0);
+  assert.equal(state.loginFlowMode, 'outlook-pool');
 });
 
 test('session token export modes force SESSION JSON access strategy', () => {

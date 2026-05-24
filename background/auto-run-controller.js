@@ -527,7 +527,9 @@
             autoRunAttemptRun: attemptRun,
           });
           roundSummary.attempts = attemptRun;
-          const defaultStartNodeId = typeof runAutoSequenceFromNode === 'function' ? 'open-chatgpt' : 1;
+          const defaultStartNodeId = typeof runAutoSequenceFromNode === 'function'
+            ? (getFirstUnfinishedWorkflowNode(await getState()) || 'open-chatgpt')
+            : 1;
           let startNodeId = defaultStartNodeId;
           let useExistingProgress = false;
 
@@ -553,6 +555,7 @@
             const prevState = await getState();
             const keepSettings = {
               panelMode: prevState.panelMode,
+              loginFlowMode: prevState.loginFlowMode,
               vpsUrl: prevState.vpsUrl,
               vpsPassword: prevState.vpsPassword,
               customPassword: prevState.customPassword,
@@ -619,6 +622,10 @@
             };
             await resetState();
             await setState(keepSettings);
+            if (typeof runAutoSequenceFromNode === 'function') {
+              const resetStateView = await getState();
+              startNodeId = getFirstUnfinishedWorkflowNode(resetStateView) || startNodeId;
+            }
             deps.chrome.runtime.sendMessage({ type: 'AUTO_RUN_RESET' }).catch(() => { });
             await sleepWithStop(500);
           } else {
@@ -663,7 +670,7 @@
               sessionId,
             });
 
-            if (!useExistingProgress && startNodeId === defaultStartNodeId && typeof ensureHotmailMailboxReadyForAutoRunRound === 'function') {
+            if (!useExistingProgress && startNodeId === 'open-chatgpt' && typeof ensureHotmailMailboxReadyForAutoRunRound === 'function') {
               await ensureHotmailMailboxReadyForAutoRunRound({
                 targetRun,
                 totalRuns,
