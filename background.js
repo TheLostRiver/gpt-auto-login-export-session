@@ -5088,6 +5088,9 @@ async function setCurrentHotmailAccount(accountId, options = {}) {
 
   if (markUsed) {
     account.lastUsedAt = Date.now();
+    if (!isHotmailAliasEnabled(state)) {
+      account.used = true;
+    }
     await syncHotmailAccounts(accounts.map((item) => (item.id === account.id ? account : item)));
   }
 

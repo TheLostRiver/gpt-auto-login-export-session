@@ -137,6 +137,16 @@ test('Outlook pool prepare node allocates Hotmail pool account and never prepare
   assert.match(source, /'outlook-pool-prepare': \(state\) => executeOutlookPoolPrepareNode\(state\)/);
 });
 
+test('Hotmail allocation marks non-alias accounts as used so the next run cannot reuse them', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+  const fnMatch = source.match(/async function setCurrentHotmailAccount[\s\S]*?\n}\n\nfunction isAuthorizedHotmailRunAccount/);
+  assert.ok(fnMatch, 'setCurrentHotmailAccount function should be present');
+  const fn = fnMatch[0];
+
+  assert.match(fn, /if \(markUsed\) \{[\s\S]*account\.lastUsedAt = Date\.now\(\);/);
+  assert.match(fn, /if \(!isHotmailAliasEnabled\(state\)\) \{[\s\S]*account\.used = true;/);
+});
+
 test('auto-run only requires CPA queue email when chatgpt-web-login is actually backed by CPA relogin queue', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
   const fnMatch = source.match(/async function runAutoSequenceFromNodeGraph[\s\S]*?\n}\n\nasync function waitForResume/);
