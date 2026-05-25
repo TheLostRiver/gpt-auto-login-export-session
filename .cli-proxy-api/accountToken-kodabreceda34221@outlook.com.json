@@ -10,7 +10,7 @@
       "otp",
       "urn:openai:amr:otp_email"
     ],
-    "mfa": false
+    "mfa": true
   },
   "expires": "2026-08-22T16:44:37.852Z",
   "account": {
