@@ -14,5 +14,6 @@ __pycache__/
 *.pyc
 .worktrees/
 /release-artifacts/
+/.cli-proxy-api/
 # Local exported runtime settings
 /config.json
